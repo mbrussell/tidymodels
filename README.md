@@ -1,2 +1,7 @@
-# tidymodels
-Using tidymodels in forest modeling workflows
+# Using tidymodels in forest modeling workflows
+
+This repository contains exercises, solutions, and datasets for *Using tidymodels in forest modeling workflows* workshop. Delivered on 11 November 2026 at the Northeastern/Southern Mensurationists (NEMO/SOMENS) Annual Meeting. 
+
+Contact: Matt Russell: [matt@arbor-analytics.com](mailto:matt@arbor-analytics.com).
+
+![Arbor Lab](wksp_thumbnail.png) {style="border: 2px solid black;"}

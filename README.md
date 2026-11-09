@@ -4,4 +4,4 @@ This repository contains exercises, solutions, and datasets for *Using tidymodel
 
 Contact: Matt Russell: [matt@arbor-analytics.com](mailto:matt@arbor-analytics.com).
 
-![Arbor Lab](wksp_thumbnail.png) {style="border: 2px solid black;"}
+<img src="wksp_thumbnail.png" alt="Arbor Lab" width="600">

@@ -1,0 +1,428 @@
+---
+format:
+  revealjs:
+    theme: [simple, arbor.scss]
+    slide-number: true
+    code-copy: true
+    code-line-numbers: false
+    transition: fade
+    preview-links: auto
+    width: 1313
+    height: 875
+---
+## Using tidymodels in forest modeling workflows {.smaller}
+
+::: {.columns}
+::: {.column width="50%"}
+![](https://tidymodels.tidymodels.org/logo.png){fig-align="center" fig-alt="tidymodels hex logo" width="40%"}
+
+::: {.columns .align-center}
+::: {.column width="45%"}
+Matt Russell\
+11 November 2026\
+SOMENS/NEMO Meeting
+:::
+::: {.column width="55%"}
+![](images/arbor_block2.png){fig-alt="Arbor Analytics logo" width="150%"}
+:::
+:::
+
+:::
+::: {.column width="50%"}
+![](https://arbor-analytics.com/post/2025-05-27-accounting-for-defect-tree-biomass/ash_tree.jpg){fig-align="center" fig-alt="Ash tree"}
+:::
+:::
+## Workshop resources
+
+- Welcome!
+- Access the code, data and slides from [https://github.com/mbrussell/tidymodels/](https://github.com/mbrussell/tidymodels/)
+- We'll conclude by 3:00 p.m.
+<br>
+![](images/qr-code-github.png){fig-align="center" fig-alt="QR code" width=50%}
+
+
+
+## Objectives
+
+1. Understand the core packages and functions within tidymodels and how they can be used for common forest modeling scenarios. 
+2. Be able to design workflows that allow for training and testing models to evaluate and validate their performance.
+3. Understand how to work with model output in an efficient manner so that results can be easily interpreted and visualized. 
+
+## tidymodels
+
+::: {.columns}
+::: {.column width="50%"}
+<br>
+![](https://tidymodels.tidymodels.org/logo.png){fig-align="center"}
+:::
+::: {.column width="50%"}
+<br>
+```{r}
+#| echo: true
+#| eval: false
+install.packages("tidymodels")
+library(tidymodels)
+```
+<br>
+
+- A collection of R packages for modeling (e.g., regression, machine learning)
+- Uses tidyverse principles (good for data wrangling and visualization)
+- Sets up workflows that are reproducible
+
+:::
+:::
+
+
+## tidymodels is a collection of many packages
+
+::: columns
+
+::: {.column}
+
+There are ~8 core packages in `tidymodels`. We'll focus on:
+
+<br> 
+
+* `rsample` - Splits data into training and testing sets 
+* `recipes` - Preprocesses data 
+* `parsnip` - Specifies models 
+* `broom` - Converts model objects into tidy datasets 
+* `yardstick` - Assesses model performance 
+
+
+:::
+
+::: {.column .center}
+
+![](images/tidymodels-pkgs.png){fig-align="center" fig-alt="tidymodels packages hex logos" width=100%} 
+
+<small>Image: <a href="https://rpubs.com/chenx/tidymodels_tutorial">rpubs.com/chenx/tidymodels_tutorial</a></small>
+
+:::
+
+:::
+
+
+
+## Our dataset
+
+::: columns
+
+::: {.column}
+- NSVB_TREE.csv
+- Tree measurements of volume, weight, and physical properties (*n* = 12,000+)
+- Biomass components for stem wood, bark, branches, and foliage
+- Available from [Virginia Tech's Data Repository](https://data.lib.vt.edu/articles/dataset/LegacyTreeData_v2/22582432)
+
+:::
+
+::: {.column .center}
+
+![](images/white-pine-logs.jpg){fig-align="center" fig-alt="A pile of white pine logs" width=100%} 
+
+:::
+
+:::
+
+
+## Goal: Predict aboveground tree biomass for various species groups
+
+* There are 114 different species in the dataset
+* We will group species into one of 10 Jenkins species groups.
+
+::: columns
+
+::: {.column}
+
+```{r}
+#| echo: true
+#| eval: false
+tree |>  
+  group_by(COMMON_NAME) |> 
+  summarize(`Num trees` = n(),
+            `Mean DBH (cm)` = round(mean(dbh_cm, na.rm=T), 1),
+            `Min DBH (cm)` = min(dbh_cm, na.rm=T),
+            `Max DBH (cm)` = max(dbh_cm, na.rm=T),
+            `Mean weight (kg)`= round(mean(bm_kg, na.rm=T), 1),
+            `Min weight (kg)` = min(bm_kg, na.rm=T),
+            `Max weight (kg)` = max(bm_kg, na.rm=T)) |> 
+  arrange(desc(`Num trees`))
+```
+
+:::
+
+::: {.column .center}
+
+![](images/species_list.png){fig-align="center" fig-alt="R screenshot showing a summary of 114 species." width=100%} 
+
+:::
+
+:::
+
+## Task 1: Explore the biomass dataset {data-time="15 min"}
+
+::: columns
+
+::: {.column}
+* Our primary variable of interest is `TT_DW_ADJ` (Aboveground wood, bark, and foliage dry weight)
+* See the NSVB Data Dictionary for more information on the variables in the dataset.
+* Head to `tidymodels_notebook.qmd` to explore to get started.
+
+:::
+
+::: {.column .center}
+
+![](images/biomass_plot.png){fig-align="center" fig-alt="Plot of tree biomass by diameter for nine species groups." width=100%} 
+
+:::
+
+:::
+
+
+## The modeling
+
+| Exercise | Functions |
+|:---------|:------|
+| Refit a single species group | `workflow()`, `fit()`, `tidy()` |
+| Refit to all species groups | `nest()`, `map()` |
+| Compare fits to original Jenkins equation | Joining and interpreting coefficients |
+| Predict biomass on new sites | Back-transformation |
+
+
+## The Jenkins equation form
+
+$$
+\ln(bm) = \beta_0 + \beta_1 \ln(dbh)
+$$
+
+or equivalently, on the original scale:
+
+$$
+bm = e^{\beta_0 + \beta_1 \ln(dbh)} = e^{\beta_0} \cdot dbh^{\beta_1}
+$$
+
+::: {.columns}
+
+::: {.column width="50%"}
+* $bm$ = total aboveground dry biomass (kg)
+* $dbh$ = diameter at breast height (cm)
+* $\beta_0, \beta_1$ = coefficients, **one pair per species group**
+:::
+
+::: {.column width="50%"}
+* Linear on the log-log scale
+* We can use `linear_reg()` 
+
+:::
+
+:::
+
+
+## `broom`: turns model objects into tidy datasets 
+
+* Model objects from base R (e.g., `lm()`) store results in nested lists. These are awkward to work with.
+* `broom` converts model onject output into **tibbles**, so you can use the tidyverse.
+* Three key functions:
+    * `tidy()` - Extracts model coefficients and related statistics
+    * `glance()` - Provides overall model fit statistics
+    * `augment()` - Adds predictions and residuals to the original data
+
+## Task 2: Refit the Jenkins et al. 2003 equation {data-time="20 min"}
+
+::: columns
+
+::: {.column}
+* Fit `ln(biomass) ~ ln(DBH)` separately for each Jenkins species group
+* Compare your coefficients to the published values in `REF_SPECIES`
+* Predict biomass on held-out sites and calculate bias in kg
+
+:::
+
+::: {.column .center}
+
+![](images/jenkins_eqns.png){fig-align="center" fig-alt="Plot of tree biomass by diameter for nine species groups." width=100%} 
+
+:::
+
+:::
+
+
+## Random forests 
+
+::: columns
+
+::: {.column}
+* First, take several small samples of the data
+* Any observations that aren’t taken are called “out-of-bag” samples
+* Build a set of regression trees on the sampled data and calculate mean square error 
+:::
+
+::: {.column .center}
+
+![](images/rf_bootstrap.png){fig-align="center" fig-alt="An example of bootstrapped samples from a random forest." width=100%} 
+
+:::
+
+:::
+
+## Variable importance in random forests 
+
+::: columns
+
+::: {.column}
+* If the percent increase in MSE after removing the variable is large, it’s an important variable!
+* If the percent increase in MSE is small, it’s less important
+:::
+
+::: {.column .center}
+
+![](images/rf_importance.png){fig-align="center" fig-alt="An example of variable importance in a random forest model." width=100%} 
+
+:::
+
+:::
+## Key arguments in `rand_forest()` {.smaller}
+
+::: {.columns}
+
+::: {.column width="52%"}
+
+<br>
+
+| Argument | Meaning | Value |
+|:---------|:--------|:----------|
+| `trees` | Number of trees in the forest | e.g., 500 |
+| `mtry` | Predictors considered at each split | 1 or 2 (DBH or species group) |
+| `min_n` | Minimum observations to split a node | e.g., 5 |
+
+:::
+
+::: {.column width="48%"}
+<br>
+```{r}
+#| echo: true
+#| eval: false
+rand_forest(
+  trees = 500,
+  mtry  = 2,
+  min_n = 5) |>
+  set_engine("ranger",
+             importance = "permutation") |>
+  set_mode("regression")
+```
+
+:::
+
+:::
+## Task 3: Random forests to predict tree biomass {data-time="15 min"}
+
+::: columns
+
+::: {.column}
+* Specify a random forest with `rand_forest()` and the `ranger` engine
+* Fit it to the same training data and predictors as the Jenkins refit
+* Evaluate the model on held-out sites 
+:::
+
+::: {.column .center}
+
+![](images/tree-diagram.png){fig-align="center" fig-alt="Diagram of a regression tree." width=100%} 
+
+:::
+
+:::
+
+
+## How to compare models?
+
+
+| Metric | Measures | 
+|:-------|:---------|
+| **RMSE** (kg) | Typical error |
+| **MAE** (kg) | Mean absolute error | 
+| **Bias** (%) | Systematic over- or under-prediction | 
+
+<br>
+
+* Compute metrics on the original (kg) scale
+* Use the held-out (test) data
+
+
+## The `yardstick` package
+
+::: {.columns}
+
+::: {.column width="52%"}
+
+* Provides metric functions, e.g., `rmse()`, `mae()`, `rsq()`
+* `metric_set()` bundles all metrics using a single function
+* Outputs a dataset (i.e., a "tidy tibble")
+
+```{r}
+#| echo: true
+#| eval: false
+# Get one metric
+rmse(test_pred, 
+     truth = bm_kg,
+     estimate = rf_kg)
+
+# Get a bundle of metrics
+biomass_metrics <- metric_set(rmse, mae, bias)
+```
+:::
+
+::: {.column width="48%"}
+
+![](images/yardstick.png){fig-align="center" fig-alt="Hex sticker for yardstick package." width=50%} 
+
+:::
+
+:::
+## Task 4: Compare Jenkins refit to random forests {data-time="15 min"}
+
+::: columns
+
+::: {.column}
+* Combine predictions from the Jenkins refit and the random forests
+* Calculate bias and error by Jenkins group with `yardstick` package
+* Visualize where each model over- or under-predicts
+
+:::
+
+::: {.column .center}
+
+::: {layout-ncol=2}
+![](images/jenkins_eqns.png){fig-alt="Jenkins et al. biomass equations"}
+
+![](images/tree-diagram.png){fig-alt="Diagram of a regression tree"}
+:::
+
+:::
+
+:::
+
+
+## Sidequests!
+
+::: columns
+
+::: {.column}
+* See `tidymodels_notebook.qmd` for additional exercises to tackle with the data.
+
+:::
+
+::: {.column .center}
+
+![](images/bog-canoe.jpg){fig-align="center" fig-alt="A bog on a canoe." width=100%} 
+
+:::
+
+:::
+
+## More `tidymodels` resources
+
+* [tidymodels.org](https://www.tidymodels.org/start/)
+* [*Tidy Modeling with R*](https://www.tmwr.org/) (book)
+* A few Arbor Analytics blog posts on tidymodels:
+  * [Predicting tree biomass for many species](https://arbor-analytics.com/post/2024-07-22-regression-with-tidymodels/index.html)
+  * [Bootstrapped resampling to model tree biomass](https://arbor-analytics.com/post/2023-04-12-bootstrapped-resampling-estimates-to-predict-tree-height/index.html#bootstrapping-regressions-with-tidymodels)

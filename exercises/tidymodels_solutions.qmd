@@ -1,0 +1,453 @@
+---
+title: "Using tidymodels in forest modeling workflows (SOLUTIONS)"
+subtitle: "NEMO/SOMENS Annual Meeting, Portland, ME"
+author: "Matt Russell, Arbor Analytics"
+date: "2026-11-10"
+format:
+  html:
+    theme: [cosmo, arbor.scss]
+    toc: true
+    toc-depth: 3
+    code-tools: true
+    code-copy: true
+    df-print: paged
+    embed-resources: true
+    fig-width: 8
+    fig-height: 5
+    fig-align: center
+  docx:
+    toc: true
+execute:
+  warning: false
+  message: false
+editor: source
+---
+
+Welcome! These workshop materials will guide you through using the **tidymodels** package in R, using an example application in forestry. The workshop covers data exploration, designing and evaluating models, and interpreting and visualizing model results.
+
+## Objectives
+
+1. Understand the core packages and functions within tidymodels and how they can be used for common forest modeling scenarios. 
+2. Be able to design workflows that allow for training and testing models to evaluate and validate their performance.
+3. Understand how to work with model output in an efficient manner so that results can be easily interpreted and visualized. 
+
+## Data
+
+All data can be found in [this GitHub repository](https://github.com/mbrussell/tidymodels). We'll use the **NSVB_TREE** table from the National Scale Volume and Biomass (NSVB) sampled trees database available from [Virginia Tech's Data Repository](https://data.lib.vt.edu/articles/dataset/LegacyTreeData_v2/22582432). Each row is a destructively sampled tree with its diameter at breast height (`DO_BH`, inches), height (`HT_TOT`, feet), and dry weights of the stem, branches, and foliage (pounds). This dataset has been pre-filtered from a larger dataset to include only trees where foliage was weighed (`FOL_IND == 1`). Trees are collected from different studies (`AUTHOR`) and locations (`LOC`) throughout the United States.
+
+Our response variable is `TT_DW_ADJ`, the aboveground dry weight of wood, bark, and foliage. The `TT_DW_ADJ` column is complete where foliage was weighed (`FOL_IND == 1`).
+
+We'll compare our results to the published equations in [Jenkins et al. 2003](https://www.fs.usda.gov/treesearch/pubs/6996). The **REF_SPECIES** table is a lookup table that links each species code (`SPCD`) to a Jenkins species group (`JENKINS_SPGRPCD`) and the published Jenkins coefficients for determining total aboveground biomass (`JENKINS_TOTAL_B1`, `JENKINS_TOTAL_B2`).
+
+The following files are used, contained in the `/data` folder available in the repository:
+
+* `NSVB_TREE.csv`
+* `REF_SPECIES.csv`
+
+## R packages
+
+**tidymodels**, **tidyverse**, **ranger**
+
+We'll set the working directory and install and load the necessary R packages below:
+
+```{r}
+# Set the working directory
+setwd("C:/Users/matt/Documents/Arbor/projects/workshops/tidymodels")
+
+# install.packages("tidymodels")
+# install.packages("tidyverse")
+# install.packages("ranger")
+library(tidymodels)
+library(tidyverse)
+library(ranger)
+```
+
+## Resources
+
+* **tidymodels** reference: [https://www.tidymodels.org/](https://www.tidymodels.org/)
+* NSVB data dictionary: `NSVB Data Dictionary.pdf`
+* Jenkins et al. 2003: [https://www.fs.usda.gov/treesearch/pubs/6996](https://www.fs.usda.gov/treesearch/pubs/6996)
+
+## Task 1: Explore the biomass dataset
+
+Read in `NSVB_TREE.csv` with `read_csv()` and name the data set **tree**. Also read in `REF_SPECIES.csv` and name it **spp**. How many trees are in the data?
+
+```{r}
+tree <- read_csv("data/NSVB_TREE.csv") 
+
+spp <- read_csv("data/REF_SPECIES.csv")
+
+nrow(tree)
+
+# There are 12,490 trees in the dataset.
+```
+
+The Jenkins species groups are coded 1 to 10. Run the code below using the `tribble()` function (a **tidyverse** function that builds a small lookup table of names), then use `left_join()` to link **spp** to **tree** by `SPCD`. Create the variables we'll use for modeling using a `mutate()` function:
+
+* `site_id`: the study and location combined
+* `sp_grp`: the Jenkins species group as a factor
+* `dbh_cm` and `bm_kg`: diameter in centimeters and biomass in kilograms (Jenkins used metric units; our data uses inches and pounds)
+* `ln_dbh` and `ln_bm`: natural logs of each
+
+```{r}
+jenkins_spp_names <- tribble(
+  ~JENKINS_SPGRPCD, ~JENKINS_SPGRPNAME,
+  1,  "cedar/larch",
+  2,  "Douglas-fir",
+  3,  "true fir/hemlock",
+  4,  "pine",
+  5,  "spruce",
+  6,  "aspen/alder/cottonwood/willow",
+  7,  "soft maple/birch",
+  8,  "mixed hardwood",
+  9,  "hard maple/oak/hickory/beech",
+  10, "woodland spp."
+)
+
+tree <- tree |>
+  left_join(spp, by = "SPCD") |>
+  left_join(jenkins_spp_names, by = "JENKINS_SPGRPCD") |>
+  filter(!is.na(JENKINS_SPGRPCD), TT_DW_ADJ > 0, DO_BH > 0) |>
+  mutate(site_id = paste(AUTHOR, LOC, sep = "_"),
+         sp_grp  = factor(JENKINS_SPGRPCD, levels = 1:10),
+         dbh_cm  = DO_BH * 2.54,
+         bm_kg   = TT_DW_ADJ * 0.45359237,
+         ln_dbh  = log(dbh_cm),
+         ln_bm   = log(bm_kg))
+```
+
+Using `ggplot()`, create a plot of tree diameter (x-axis) versus biomass (y-axis), facetted by Jenkins species group. 
+
+```{r}
+# All data
+ggplot(tree, aes(x = dbh_cm, y = bm_kg)) +
+  geom_point(alpha = 0.25) +
+  facet_wrap(~JENKINS_SPGRPNAME) +
+  labs(x = "DBH (cm)",
+       y = "Aboveground wood, bark, and foliage dry weight (kg)",
+       col = "Jenkins species group")
+```
+
+What's going on with those big cedar/larch trees? Let's filter them out and plot the data again (e.g., try `filter(JENKINS_SPGRPCD != 1)`).
+
+```{r}
+tree <- tree |> 
+  filter(JENKINS_SPGRPCD != 1)
+
+# Filter data (removing cedar/larch)
+ggplot(tree, aes(x = dbh_cm, y = bm_kg)) +
+  geom_point(alpha = 0.25) +
+  facet_wrap(~JENKINS_SPGRPNAME) +
+  labs(x = "DBH (cm)",
+       y = "Aboveground wood, bark, and foliage dry weight (kg)",
+       col = "Jenkins species group")
+```
+
+The Jenkins equation is linear on the log scale, i.e., $\ln(bm) = \beta_0 + \beta_1 \ln(dbh)$. On the log-log scale each group shows an approximate straight line. Make a similar scatter plot of biomass and diameter using the log scale on both axes.
+
+```{r}
+ggplot(tree, aes(dbh_cm, bm_kg)) +
+  geom_point(alpha = 0.25) +
+  scale_x_log10() +
+  scale_y_log10() +
+  facet_wrap(~ JENKINS_SPGRPNAME) +
+  labs(x = "Diameter at breast height (cm)",
+       y = "Aboveground biomass (kg)")
+```
+
+## Task 2. Refit the Jenkins et al. 2003 equation
+
+We will split the data into model training and model testing datasets using the `group_initial_split()` function. This function is from the **rsample** package, one of the many packages in the **tidymodels** ecosystem.
+
+Trees from the same study and location are not necessarily independent, so we will split by `site_id` rather than by tree. This way the test dataset will measure how well the model predicts trees at new sites not used in the model training.
+
+```{r}
+set.seed(11102026)
+
+# Assume 80% and 20% of data in training and testing datasets, respectively
+split <- group_initial_split(tree, group = site_id, prop = 0.8)
+
+train <- training(split)
+test  <- testing(split)
+```
+
+Choose one of the ten Jenkins species group that interests you. Fit the Jenkins equation for that group using **tidymodels** functions in these steps:
+
+* Use `workflow()` and `linear_reg()` to predict tree biomass using tree diameter. 
+* Use the `tidy()` function to visualize the coefficients with confidence intervals.
+
+```{r}
+# We'll select the pine species group (group 4)
+pine_train <- train |> 
+    filter(sp_grp == "4")
+
+wf <- workflow(ln_bm ~ ln_dbh, linear_reg())
+
+pine_fit <- fit(wf, data = pine_train)
+
+tidy(pine_fit, conf.int = TRUE)
+```
+
+The same workflow can be fit to every group by nesting the data. This is the value of `workflows` in tidymodels: you can specify a model form once and apply it many times. 
+
+Fit the workflow to each Jenkins group, keep the sample size, residual variance (we'll need it for a back-transformation correction later), and the coefficients. Then we'll pull out the slope for each group.
+
+What the functions do:
+
+* `nest()` nests the data by species group.
+* `map_int()` calculates the sample size for each group.
+* `map(data, \(d) fit(wf, d))` fits the workflow to each species group.
+* `map_dbl()` extracts the residual variance for each fit.
+* `map(fit, \(f) tidy(f, conf.int = TRUE))` extracts the coefficients with confidence intervals for each fit.
+
+```{r}
+fits <- train |>
+  nest(data = -sp_grp) |>
+  mutate(
+    n      = map_int(data, nrow),
+    fit    = map(data, \(d) fit(wf, d)),
+    sigma2 = map_dbl(fit, \(f) sigma(extract_fit_engine(f))^2),
+    coefs  = map(fit, \(f) tidy(f, conf.int = TRUE))
+  )
+```
+
+Then, we'll stack the coefficient tables and keep the slope ($\beta_1$) for each group:
+
+```{r}
+fits |>
+  select(sp_grp, n, coefs) |>
+  unnest(coefs) |>
+  select(sp_grp, n, estimate, conf.low, conf.high) |>
+  arrange(sp_grp)
+```
+
+Which species group has the widest confidence interval? 
+
+The published coefficients from Jenkins et al. (2003) are stored in **spp** and in Table 4 in their publication. Use the lookup table below and join it to the refit coefficients from the previous step. Then, make a plot of the refit slopes (with confidence intervals) against the published slopes.
+
+```{r}
+jenkins_coef <- tribble(
+  ~sp_grp, ~JENKINS_SPGRPNAME,       ~B0_JENKINS,     ~B1_JENKINS,
+  1,  "cedar/larch",                          -2.0336,         2.2592,
+  2,  "Douglas-fir",                          -2.2304,         2.4435,
+  3,  "true fir/hemlock",                     -2.5384,         2.4814,
+  4,  "pine",                                 -2.5356,         2.4349,
+  5,  "spruce",                               -2.0773,         2.3323,
+  6,  "aspen/alder/cottonwood/willow",        -2.2094,         2.3867,
+  7,  "soft maple/birch",                     -1.9123,         2.3651,
+  8,  "mixed hardwood",                       -2.4800,         2.4835,
+  9,  "hard maple/oak/hickory/beech",         -2.0127,         2.4342,
+  10, "woodland spp. (juniper/oak/mesquite)", -0.7152,         1.7029) |> 
+    mutate(sp_grp = factor(sp_grp))
+```
+
+```{r}
+refit_coefs <- fits |>
+  select(sp_grp, n, coefs) |>
+  unnest(coefs) |>
+  mutate(term = if_else(term == "(Intercept)", "B0", "B1")) |>
+  select(sp_grp, n, term, estimate, conf.low, conf.high) |>
+  pivot_wider(names_from = term,
+              values_from = c(estimate, conf.low, conf.high))
+
+compare <- refit_coefs |>
+  left_join(jenkins_coef, by = "sp_grp") |>
+  left_join(distinct(tree, sp_grp), by = "sp_grp") |>
+  mutate(slope_in_ci = B1_JENKINS >= conf.low_B1 & B1_JENKINS <= conf.high_B1)
+
+compare |>
+  select(JENKINS_SPGRPNAME, n, estimate_B1, B1_JENKINS, 
+         conf.low_B1, conf.high_B1, slope_in_ci)
+```
+
+```{r}
+ggplot(compare, aes(estimate_B1, JENKINS_SPGRPNAME)) +
+  geom_pointrange(aes(xmin = conf.low_B1, xmax = conf.high_B1),
+                  color = "black") +
+  geom_point(aes(B1_JENKINS), color = "red", shape = 4) +
+  labs(x = "ln(DBH) slope (B1)", y = NULL,
+       caption = "Red X = published Jenkins et al. (2003) value")
+```
+
+Which species group(s) have published slopes inside the refit confidence interval? 
+
+Predict biomass for the held-out sites using each species group's fit. Because the model is fit to `ln(biomass)`, `exp()` of the prediction returns the median on the kg scale, which underestimates the mean. The Baskerville correction multiplies by $e^{\sigma^2/2}$. Compare three predictions in kg: the published equation, the refit, and the refit with the Baskerville correction.
+
+```{r}
+test_pred <- test |>
+  nest(new = -sp_grp) |>
+  inner_join(select(fits, sp_grp, fit, sigma2), by = "sp_grp") |>
+  mutate(pred = map2(fit, new, \(f, d) predict(f, d)$.pred)) |>
+  select(-fit) |>
+  unnest(c(new, pred)) |>
+  mutate(
+    refit_kg    = exp(pred),
+    refit_bc_kg = exp(pred + sigma2 / 2),
+    jenkins_kg  = exp(JENKINS_TOTAL_B1 + JENKINS_TOTAL_B2 * ln_dbh)
+  )
+
+# Percent bias by group
+bias_task2 <- test_pred |>
+  summarise(
+    across(c(refit_kg, refit_bc_kg, jenkins_kg),
+           \(p) 100 * sum(p - bm_kg) / sum(bm_kg)),
+    .by = sp_grp
+  ) |>
+  arrange(sp_grp)
+
+bias_task2
+```
+
+
+## Task 3. Random forests to predict tree biomass
+
+We'll specify a random forest regression with 500 trees, an `mtry` of 2, and a minimum node size of 5, using the **ranger** engine. We'll also request permutation-based variable importance.
+
+```{r}
+rf_spec <- rand_forest(trees = 500, mtry = 2, min_n = 5) |>
+  set_engine("ranger", importance = "permutation") |>
+  set_mode("regression")
+
+rf_spec  
+```
+
+Fit the forest to the same training sites predictors as the Jenkins refit (`ln_dbh` and species group). Predict on the test set and back-transform to kg.
+
+```{r}
+rf_wf <- workflow(ln_bm ~ ln_dbh + sp_grp, rf_spec)
+
+set.seed(11102026)
+rf_fit <- fit(rf_wf, data = train)
+
+rf_pred <- test |>
+  bind_cols(predict(rf_fit, new_data = test)) |>
+  mutate(rf_kg = exp(.pred))
+
+rf_pred |>
+  select(sp_grp, dbh_cm, bm_kg, rf_kg) 
+```
+
+We'll calculate RMSE on the log scale (what the model was trained on) and on the kg scale (what we care about). Then we'll calculate percent bias by group.
+
+The `rmse()` function is from the **yardstick** package. It takes a data frame plus truth and estimate columns and returns a tibble.
+
+```{r}
+# Log scale
+rf_pred |>
+  rmse(truth = ln_bm, estimate = .pred)
+
+# kg scale
+rf_pred |>
+  rmse(truth = bm_kg, estimate = rf_kg)
+
+# Bias by group, in percent
+rf_pred |>
+  summarize(n_test   = n(),
+     bias_pct = 100 * sum(rf_kg - bm_kg) / sum(bm_kg),
+    .by = sp_grp
+  ) |>
+  arrange(sp_grp)
+```
+
+Which predictors does the forest rely on? A random forest has no coefficients to read, but we can ask how much each predictor matters to the predictions. **Permutation importance** answers this by shuffling one predictor's values and measuring how much the model's error increases. A large increase means the model depends on that predictor.
+
+We asked for this when we specified the model, with `set_engine("ranger", importance = "permutation")`. The scores are stored inside the fitted `ranger` object. To reach them, we use two functions:
+
+* `extract_fit_engine()` (from **workflows**) pulls the underlying `ranger` model out of the fitted workflow
+* `pluck()` (from **purrr**) extracts a named element from that object, here `"variable.importance"`
+
+The result is a named numeric vector with one score per predictor:
+
+```{r}
+imp <- rf_fit |>
+  extract_fit_engine() |>
+  pluck("variable.importance")
+
+imp
+```
+
+Make a scatter plot of observed vs. predicted biomass for each species group using the random forest model:
+
+```{r}
+ggplot(rf_pred, aes(dbh_cm)) +
+  geom_point(aes(y = bm_kg), alpha = 0.3) +
+  geom_point(aes(y = rf_kg), color = "red", alpha = 0.3) +
+  scale_x_log10() +
+  scale_y_log10() +
+  facet_wrap(~ sp_grp) +
+  labs(x = "DBH (cm)", y = "Biomass (kg)",
+       caption = "Black = observed, red = random forest")
+```
+
+## Task 4. Compare the Jenkins refit to the random forest
+
+Tasks 2 and 3 each produced a model. Now we'll decide which model we might prefer for new sites.
+
+First, we'll add the random forest predictions to the test-set table from Task 2, then reshape to one row per tree per model so that the same code works for every model.
+
+```{r}
+test_pred <- test_pred |>
+  mutate(rf_kg = exp(predict(rf_fit, new_data = test_pred)$.pred))
+
+model_labels <- c(jenkins_kg  = "Jenkins (published)",
+                  refit_bc_kg = "Jenkins refit",
+                  rf_kg       = "Random forest")
+
+long_pred <- test_pred |>
+  pivot_longer(c(jenkins_kg, refit_bc_kg, rf_kg),
+               names_to = "model", values_to = ".pred") |>
+  mutate(model = factor(model, levels = names(model_labels),
+                        labels = model_labels)) 
+```
+
+Calculate RMSE and MAE (in kg) and percent bias for each model within each Jenkins group. The `yardstick` package treats the three models identically. 
+
+```{r}
+metrics <- metric_set(rmse, mae)
+
+perf <- long_pred |>
+  group_by(model, JENKINS_SPGRPNAME) |>
+  metrics(truth = bm_kg, estimate = .pred)
+
+bias <- long_pred |>
+  summarise(bias_pct = 100 * sum(.pred - bm_kg) / sum(bm_kg),
+            n_test   = n(),
+            .by = c(model, JENKINS_SPGRPNAME))
+
+perf |>
+  pivot_wider(names_from = .metric, values_from = .estimate) |>
+  left_join(bias, by = c("model", "JENKINS_SPGRPNAME")) |>
+  arrange(JENKINS_SPGRPNAME, model)
+```
+
+Plot the percent bias for each group and model. 
+
+```{r}
+ggplot(bias, aes(bias_pct, JENKINS_SPGRPNAME, fill = model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+    geom_vline(xintercept = 0) +
+  labs(x = "Bias on held-out sites (%)", y = NULL, color = NULL) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom")
+```
+
+Make a plot of the residuals for all three models plotted against diameter.
+
+```{r}
+ggplot(long_pred, aes(dbh_cm, .pred - bm_kg, color = model)) +
+  geom_hline(yintercept = 0) +
+  geom_point(alpha = 0.25) +
+  facet_wrap(~ JENKINS_SPGRPNAME, scales = "free") +
+  labs(x = "DBH (cm)", y = "Residual (predicted - observed, kg)", color = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+## Sidequests!
+
+1. A criticism of the Jenkins et al. equations has been that they only use diameter as a predictor. Add `ln_ht` as a second predictor in refitting the equation with regression and the random forest. How much does adding height lower the bias for each species group? Use the `tidy()` function to extract model coefficients and compare them.
+
+2. There are many more predictors available in the **NSVB_TREE** dataset. Fit a random forest model that includes several additional predictors, including tree height and individual tree species, among others. How do the importance scores for these additional variables compare to only using tree diameter and species group? Specify a different model using `ranger` and compare the variable importance scores.
+
+3. Bootstrap the regression estimates for a species group using `bootstraps()`. Hint: See a worked example from the [Arbor Analytics blog](https://arbor-analytics.com/post/2023-04-12-bootstrapped-resampling-estimates-to-predict-tree-height/index.html#bootstrapping-regressions-with-tidymodels). Compare the bootstrap confidence intervals to the confidence interval produced from Task 2.
+

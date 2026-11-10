@@ -52,7 +52,7 @@ We'll set the working directory and install and load the necessary R packages be
 
 ```{r}
 # Set the working directory
-setwd("C:/Users/matt/Documents/Arbor/projects/workshops/tidymodels")
+setwd("your/working/directory")
 
 # install.packages("tidymodels")
 # install.packages("tidyverse")

@@ -53,7 +53,7 @@ The code below reads files from a `data/` folder. Install (if needed) and load t
 
 ```{r}
 # Set the working directory (edit the path, then remove the #)
-# setwd("C:/path/to/your/tidymodels/folder")
+# setwd("your/working/directory")
 
 # install.packages("tidymodels")
 # install.packages("tidyverse")

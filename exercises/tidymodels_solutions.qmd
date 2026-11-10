@@ -451,3 +451,4 @@ ggplot(long_pred, aes(dbh_cm, .pred - bm_kg, color = model)) +
 
 3. Bootstrap the regression estimates for a species group using `bootstraps()`. Hint: See a worked example from the [Arbor Analytics blog](https://arbor-analytics.com/post/2023-04-12-bootstrapped-resampling-estimates-to-predict-tree-height/index.html#bootstrapping-regressions-with-tidymodels). Compare the bootstrap confidence intervals to the confidence interval produced from Task 2.
 
+4. The recent [National-Scale Volume and Biomass equations](https://research.fs.usda.gov/treesearch/66998) evaluated four different allometric equations for predicting tree volume and biomass (Schumacher-Hall, Segmented, Continuously-variable, and Modified Wiley; see equations 1-4 in the PDF). Create a new workflow and recipe that fits these equations to the **NSVB_TREE** dataset for a species of interest and compare its performance to the models developed here.
